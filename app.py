@@ -8,7 +8,7 @@ st.set_page_config(page_title="AuditPortal Pro", layout="wide")
 # --- AUTHENTICATION (For Resume: Use Secrets) ---
 # On Streamlit Cloud, you'll put these in "Advanced Settings > Secrets"
 GITHUB_TOKEN = st.secrets["GITHUB_TOKEN"] 
-REPO_NAME = "your-github-username/client-audit-repo" # Example
+REPO_NAME = "parameshwarareddy1/audit-portal-app"
 
 g = Github(GITHUB_TOKEN)
 repo = g.get_repo(REPO_NAME)
