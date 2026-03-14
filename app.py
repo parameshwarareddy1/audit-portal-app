@@ -1,110 +1,95 @@
 import streamlit as st
 import pandas as pd
 from github import Github
-import io
+import time
 
-# --- CONFIGURATION ---
-st.set_page_config(page_title="AuditCore | IT Audit Portal", layout="wide", page_icon="🛡️")
+# --- MINIMALIST UI CONFIG ---
+st.set_page_config(page_title="AuditCore | Minimal", layout="wide")
 
-# Styling to make it look like a professional SaaS
+# CSS for a clean Black & White "Fieldguide" look
 st.markdown("""
     <style>
-    .stApp { background-color: #f8f9fa; }
-    .stExpander { background-color: white !important; border-radius: 10px; border: 1px solid #e6e9ef !important; }
+    .stApp { background-color: #ffffff; color: #000000; }
+    h1, h2, h3 { border-bottom: 1px solid #000000; padding-bottom: 10px; }
+    .stExpander { border: 1px solid #000000 !important; border-radius: 0px !important; }
+    .stButton>button { border-radius: 0px; border: 1px solid #000000; background-color: white; color: black; }
+    .stButton>button:hover { background-color: #000000; color: white; }
     </style>
     """, unsafe_allow_html=True)
 
-# Securely connect to GitHub
+# --- GITHUB CONNECTION ---
 try:
     GITHUB_TOKEN = st.secrets["GITHUB_TOKEN"]
     REPO_NAME = "parameshwarareddy1/audit-portal-app"
     g = Github(GITHUB_TOKEN)
     repo = g.get_repo(REPO_NAME)
 except Exception as e:
-    st.error("⚠️ Connection Error. Please check your GITHUB_TOKEN in Streamlit Secrets.")
+    st.error("Connect Token to Streamlit Secrets.")
     st.stop()
 
-# --- SIDEBAR & NAVIGATION ---
-st.sidebar.image("https://cdn-icons-png.flaticon.com/512/1063/1063302.png", width=100)
-st.sidebar.title("Audit Dashboard")
-st.sidebar.info(f"**Client:** {REPO_NAME.split('/')[1].upper()}")
+# --- MAIN APP ---
+st.title("AUDIT ENGAGEMENT PORTAL")
+st.caption(f"REPOSITORY: {REPO_NAME.upper()}")
 
-# --- TABS ---
-tab_portal, tab_admin = st.tabs(["📋 Engagement Portal", "⚙️ Admin & Setup"])
+tab_portal, tab_admin = st.tabs(["PORTAL", "SETTINGS"])
 
-# --- TAB: ADMIN (BULK CREATION) ---
+# --- TAB: ADMIN (UPLOAD) ---
 with tab_admin:
-    st.header("Upload PBC Request List")
-    st.write("Upload an Excel file with 'Title' and 'Description' columns to populate the audit.")
-    
-    uploaded_excel = st.file_uploader("Choose PBC Excel File", type=["xlsx"])
+    st.subheader("BATCH REQUEST UPLOAD")
+    uploaded_excel = st.file_uploader("Upload PBC Excel (Columns: Title, Description)", type=["xlsx"])
     
     if uploaded_excel:
-        try:
-            df = pd.read_excel(uploaded_excel)
-            st.dataframe(df, use_container_width=True)
-            
-            if st.button("🚀 Sync Requests to GitHub"):
-                with st.spinner("Generating audit requests..."):
-                    for _, row in df.iterrows():
-                        repo.create_issue(
-                            title=str(row['Title']),
-                            body=str(row['Description'])
-                        )
-                    st.success(f"Successfully created {len(df)} requests!")
-                    st.balloons()
-        except Exception as e:
-            st.error(f"Excel Error: {e}. Ensure you have 'openpyxl' in requirements.txt.")
+        df = pd.read_excel(uploaded_excel)
+        if st.button("SYNC TO GITHUB"):
+            with st.spinner("Processing..."):
+                for _, row in df.iterrows():
+                    repo.create_issue(title=str(row['Title']), body=str(row['Description']))
+                st.success("SYNC COMPLETE")
+                time.sleep(1) # Wait for GitHub indexing
+                st.rerun()
 
-# --- TAB: PORTAL (CHAT & EVIDENCE) ---
+# --- TAB: PORTAL (SEARCH & INTERACTION) ---
 with tab_portal:
-    st.header("Request Tracker & Interaction")
+    # --- SEARCH BAR ---
+    search_query = st.text_input("🔍 SEARCH REQUESTS", "").lower()
     
-    # Get all open issues
-    issues = repo.get_issues(state='open')
+    # Fetch issues
+    issues = list(repo.get_issues(state='open'))
     
-    if issues.totalCount == 0:
-        st.warning("No active requests found. Upload a PBC list in the 'Admin' tab.")
-    else:
-        for issue in issues:
-            # Check if evidence folder exists to show a "Status" tag
-            status_color = "🔴 Pending"
-            if any("✅ **New Evidence:**" in c.body for c in issue.get_comments()):
-                status_color = "🟢 Evidence Received"
+    # Filter based on search
+    filtered_issues = [i for i in issues if search_query in i.title.lower() or search_query in i.body.lower()]
 
-            with st.expander(f"{status_color} | #{issue.number}: {issue.title}", expanded=False):
-                st.write(f"**Objective:** {issue.body}")
-                st.caption(f"Created on: {issue.created_at.strftime('%Y-%m-%d')}")
-                st.divider()
+    if not filtered_issues:
+        st.info("No matching requests found.")
+    else:
+        for issue in filtered_issues:
+            # Check for evidence markers
+            has_evidence = any("✅" in c.body for c in issue.get_comments())
+            status_text = "[COMPLETED]" if has_evidence else "[PENDING]"
+
+            with st.expander(f"{status_text} #{issue.number}: {issue.title}"):
+                st.text(f"DESCRIPTION: {issue.body}")
                 
-                chat_col, upload_col = st.columns([2, 1])
+                c1, c2 = st.columns([2, 1])
                 
-                with chat_col:
-                    st.markdown("##### 💬 Conversation history")
-                    
-                    # History
+                with c1:
+                    st.markdown("**COMMUNICATION LOG**")
                     for comment in issue.get_comments():
-                        is_auditor = "parameshwarareddy1" in comment.user.login
-                        with st.chat_message("assistant" if is_auditor else "user"):
-                            st.write(f"**{comment.user.login}:** {comment.body}")
+                        st.markdown(f"**{comment.user.login}**: {comment.body}")
+                        st.markdown("---")
                     
-                    # New message
-                    msg_key = f"input_{issue.id}"
-                    new_msg = st.text_input("Reply to this request...", key=msg_key)
-                    if st.button("Send Message", key=f"btn_{issue.id}"):
+                    new_msg = st.text_input("Add comment...", key=f"in_{issue.id}")
+                    if st.button("SEND", key=f"btn_{issue.id}"):
                         if new_msg:
                             issue.create_comment(new_msg)
                             st.rerun()
 
-                with upload_col:
-                    st.markdown("##### 📤 Evidence Upload")
-                    file_key = f"file_{issue.id}"
-                    uploaded_file = st.file_uploader("Drop workpapers here", key=file_key)
-                    
-                    if uploaded_file:
-                        with st.spinner("Uploading..."):
-                            path = f"evidence/req_{issue.number}/{uploaded_file.name}"
-                            repo.create_file(path, f"Upload for #{issue.number}", uploaded_file.read())
-                            issue.create_comment(f"✅ **New Evidence:** `{uploaded_file.name}`")
-                            st.success("Uploaded to GitHub!")
-                            st.rerun()
+                with c2:
+                    st.markdown("**EVIDENCE FILING**")
+                    file = st.file_uploader("Upload File", key=f"f_{issue.id}")
+                    if file:
+                        path = f"evidence/req_{issue.number}/{file.name}"
+                        repo.create_file(path, f"Audit Evidence", file.read())
+                        issue.create_comment(f"✅ Evidence Uploaded: `{file.name}`")
+                        st.success("FILE SAVED")
+                        st.rerun()
