@@ -1,74 +1,71 @@
 import streamlit as st
+import pandas as pd
 from github import Github
-import os
+import io
 
-# --- PAGE CONFIG ---
-st.set_page_config(page_title="AuditPortal Pro", layout="wide")
-
-# --- AUTHENTICATION (For Resume: Use Secrets) ---
-# On Streamlit Cloud, you'll put these in "Advanced Settings > Secrets"
-GITHUB_TOKEN = st.secrets["GITHUB_TOKEN"] 
-REPO_NAME = "parameshwarareddy1/audit-portal-app"
-
+# --- SETUP ---
+st.set_page_config(page_title="AuditCore Pro", layout="wide")
+GITHUB_TOKEN = st.secrets["GITHUB_TOKEN"]
 g = Github(GITHUB_TOKEN)
-repo = g.get_repo(REPO_NAME)
 
-# --- APP INTERFACE ---
-st.title("🛡️ IT Audit Evidence Portal")
-st.caption(f"Connected to Repository: {REPO_NAME}")
+# --- 1. DASHBOARD: CLIENT SELECTION ---
+st.sidebar.title("🏢 Audit Dashboard")
+# In a real app, you'd fetch all repos with a specific prefix like 'audit-'
+client_repos = ["parameshwarareddy1/client-alpha-2026", "parameshwarareddy1/client-beta-2026"]
+selected_client = st.sidebar.selectbox("Select Audit Engagement", client_repos)
 
-# Create two columns: Left for Request List, Right for Chat/Upload
-col1, col2 = st.columns([1, 2])
+repo = g.get_repo(selected_client)
 
-with col1:
-    st.header("📋 Request List")
-    # Fetch all 'Issues' from GitHub - each Issue is an Audit Request
-    issues = repo.get_issues(state='open')
-    issue_titles = [f"#{i.number}: {i.title}" for i in issues]
+# --- 2. THE "FIELDGUIDE" TABS ---
+tab1, tab2, tab3 = st.tabs(["📊 Engagement Overview", "💬 Request Portal", "⚙️ Admin Setup"])
+
+with tab3:
+    st.header("Bulk Request Creator")
+    st.write("Upload your PBC (Provided by Client) Excel list here.")
+    uploaded_excel = st.file_uploader("Upload Excel Request List", type=['xlsx'])
     
-    if not issue_titles:
-        st.info("No open requests found.")
-        selected_issue_text = None
-    else:
-        selected_issue_text = st.radio("Select a request to discuss/upload:", issue_titles)
+    if uploaded_excel:
+        df = pd.read_excel(uploaded_excel)
+        st.write("Preview of Requests:", df.head())
+        if st.button("🚀 Generate All Requests in GitHub"):
+            for index, row in df.iterrows():
+                # Creates an Issue for every row in your Excel
+                repo.create_issue(
+                    title=f"{row['ID']}: {row['Request_Name']}",
+                    body=f"**Category:** {row['Category']}\n**Description:** {row['Description']}"
+                )
+            st.success(f"Created {len(df)} requests in the client portal!")
 
-with col2:
-    if selected_issue_text:
-        # Extract issue number
-        issue_num = int(selected_issue_text.split(":")[0].replace("#", ""))
-        current_issue = repo.get_issue(number=issue_num)
-        
-        st.header(f"Request: {current_issue.title}")
-        
-        # --- CHAT PART ---
-        st.subheader("💬 Discussion")
-        # Display existing comments as chat bubbles
-        comments = current_issue.get_comments()
-        for c in comments:
-            with st.chat_message("user" if "client" in c.user.login else "assistant"):
-                st.write(f"**{c.user.login}:** {c.body}")
+with tab1:
+    st.header(f"Status for {selected_client}")
+    # Visual metrics like Fieldguide
+    open_reqs = repo.get_issues(state='open').totalCount
+    st.metric("Pending Client Action", open_reqs)
+    # You could add a progress bar here: (Completed / Total)
 
-        # Chat Input
-        new_msg = st.chat_input("Type your message here (use @client_user to tag)...")
-        if new_msg:
-            current_issue.create_comment(new_msg)
-            st.rerun()
-
-        st.divider()
-
-        # --- UPLOAD PART ---
-        st.subheader("📤 Evidence Upload")
-        uploaded_file = st.file_uploader("Upload file for this request", type=['pdf', 'xlsx', 'png', 'jpg'])
-        
-        if uploaded_file:
-            file_content = uploaded_file.read()
-            file_path = f"evidence/req_{issue_num}/{uploaded_file.name}"
+with tab2:
+    st.header("Client Interaction Portal")
+    issues = repo.get_issues(state='open')
+    
+    # List all requests in a table-like view
+    for issue in issues:
+        with st.expander(f"📌 {issue.title}"):
+            c1, c2 = st.columns([2, 1])
             
-            try:
-                # Check if file exists to update or create
-                repo.create_file(file_path, f"Evidence for #{issue_num}", file_content)
-                st.success("File uploaded and committed to GitHub!")
-                # Add a comment to the chat automatically
-                current_issue.create_comment(f"✅ Evidence uploaded: `{uploaded_file.name}`")
-            except Exception as e:
-                st.error(f"Error: {e}")
+            with c1:
+                st.subheader("Discussion")
+                for c in issue.get_comments():
+                    st.markdown(f"**{c.user.login}**: {c.body}")
+                
+                chat_msg = st.text_input("Message Client", key=f"msg_{issue.id}")
+                if st.button("Send", key=f"btn_{issue.id}"):
+                    issue.create_comment(chat_msg)
+                    st.rerun()
+            
+            with c2:
+                st.subheader("Evidence")
+                file = st.file_uploader("Drop Evidence Here", key=f"file_{issue.id}")
+                if file:
+                    repo.create_file(f"evidence/{issue.number}/{file.name}", "Upload", file.read())
+                    issue.create_comment(f"✅ Uploaded: {file.name}")
+                    st.success("Uploaded!")
