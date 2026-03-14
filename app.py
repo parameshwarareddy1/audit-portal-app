@@ -3,99 +3,108 @@ import pandas as pd
 from github import Github
 import io
 
-# --- SETUP ---
-st.set_page_config(page_title="AuditCore | parameshwarareddy1", layout="wide")
+# --- CONFIGURATION ---
+st.set_page_config(page_title="AuditCore | IT Audit Portal", layout="wide", page_icon="🛡️")
 
-# Securely get your token from Streamlit Secrets
+# Styling to make it look like a professional SaaS
+st.markdown("""
+    <style>
+    .stApp { background-color: #f8f9fa; }
+    .stExpander { background-color: white !important; border-radius: 10px; border: 1px solid #e6e9ef !important; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# Securely connect to GitHub
 try:
     GITHUB_TOKEN = st.secrets["GITHUB_TOKEN"]
     REPO_NAME = "parameshwarareddy1/audit-portal-app"
     g = Github(GITHUB_TOKEN)
     repo = g.get_repo(REPO_NAME)
 except Exception as e:
-    st.error(f"Configuration Error: {e}")
+    st.error("⚠️ Connection Error. Please check your GITHUB_TOKEN in Streamlit Secrets.")
     st.stop()
 
-# --- HEADER ---
-st.title("🛡️ IT Audit Engagement Portal")
-st.caption(f"Active Repository: {REPO_NAME}")
+# --- SIDEBAR & NAVIGATION ---
+st.sidebar.image("https://cdn-icons-png.flaticon.com/512/1063/1063302.png", width=100)
+st.sidebar.title("Audit Dashboard")
+st.sidebar.info(f"**Client:** {REPO_NAME.split('/')[1].upper()}")
 
-# --- TABS FOR WORKFLOW ---
-tab1, tab2, tab3 = st.tabs(["📋 Request List (PBC)", "💬 Communication Center", "🚀 Admin Setup"])
+# --- TABS ---
+tab_portal, tab_admin = st.tabs(["📋 Engagement Portal", "⚙️ Admin & Setup"])
 
-# --- TAB 3: ADMIN (CREATE REQUESTS FROM EXCEL) ---
-with tab3:
-    st.header("Bulk Request Generator")
-    st.info("Upload an Excel file with columns: 'Title' and 'Description' to create audit requests.")
+# --- TAB: ADMIN (BULK CREATION) ---
+with tab_admin:
+    st.header("Upload PBC Request List")
+    st.write("Upload an Excel file with 'Title' and 'Description' columns to populate the audit.")
     
-    uploaded_file = st.file_uploader("Upload PBC List (Excel)", type=["xlsx"])
-    if uploaded_file:
-        df = pd.read_excel(uploaded_file)
-        st.write("Preview:", df.head())
-        
-        if st.button("Generate Requests in GitHub"):
-            with st.spinner("Creating requests..."):
-                for _, row in df.iterrows():
-                    # Create each row as a GitHub Issue
-                    repo.create_issue(
-                        title=str(row['Title']),
-                        body=str(row['Description']),
-                        labels=["Request"] # Tagging them as 'Request'
-                    )
-                st.success(f"Successfully created {len(df)} requests!")
+    uploaded_excel = st.file_uploader("Choose PBC Excel File", type=["xlsx"])
+    
+    if uploaded_excel:
+        try:
+            df = pd.read_excel(uploaded_excel)
+            st.dataframe(df, use_container_width=True)
+            
+            if st.button("🚀 Sync Requests to GitHub"):
+                with st.spinner("Generating audit requests..."):
+                    for _, row in df.iterrows():
+                        repo.create_issue(
+                            title=str(row['Title']),
+                            body=str(row['Description'])
+                        )
+                    st.success(f"Successfully created {len(df)} requests!")
+                    st.balloons()
+        except Exception as e:
+            st.error(f"Excel Error: {e}. Ensure you have 'openpyxl' in requirements.txt.")
 
-# --- TAB 1: PBC TRACKER (OVERVIEW) ---
-with tab1:
-    st.header("Request Status Tracker")
-    issues = repo.get_issues(state='open', labels=["Request"])
+# --- TAB: PORTAL (CHAT & EVIDENCE) ---
+with tab_portal:
+    st.header("Request Tracker & Interaction")
+    
+    # Get all open issues
+    issues = repo.get_issues(state='open')
     
     if issues.totalCount == 0:
-        st.warning("No active requests found. Go to 'Admin Setup' to upload some.")
+        st.warning("No active requests found. Upload a PBC list in the 'Admin' tab.")
     else:
-        # Create a clean table view like Fieldguide
-        data = []
-        for i in issues:
-            data.append({
-                "ID": i.number,
-                "Title": i.title,
-                "Created": i.created_at.strftime("%Y-%m-%d"),
-                "Comments": i.comments
-            })
-        st.table(pd.DataFrame(data))
+        for issue in issues:
+            # Check if evidence folder exists to show a "Status" tag
+            status_color = "🔴 Pending"
+            if any("✅ **New Evidence:**" in c.body for c in issue.get_comments()):
+                status_color = "🟢 Evidence Received"
 
-# --- TAB 2: COMMUNICATION (THE CHAT) ---
-with tab2:
-    st.header("Client Chat & Evidence Upload")
-    
-    # Selection for which request to discuss
-    issue_list = {f"#{i.number}: {i.title}": i for i in repo.get_issues(state='open')}
-    
-    if not issue_list:
-        st.info("No open requests to discuss.")
-    else:
-        selected_req_title = st.selectbox("Select a Request to Open Discussion", list(issue_list.keys()))
-        selected_issue = issue_list[selected_req_title]
-        
-        col_chat, col_files = st.columns([2, 1])
-        
-        with col_chat:
-            st.subheader("Discussion Thread")
-            # Show history
-            for comment in selected_issue.get_comments():
-                with st.chat_message("user" if "parameshwarareddy1" not in comment.user.login else "assistant"):
-                    st.write(f"**{comment.user.login}**: {comment.body}")
-            
-            # New message
-            chat_input = st.chat_input("Reply to client...")
-            if chat_input:
-                selected_issue.create_comment(chat_input)
-                st.rerun()
-        
-        with col_files:
-            st.subheader("Evidence Upload")
-            file_to_upload = st.file_uploader("Upload evidence for this request", key=f"file_{selected_issue.id}")
-            if file_to_upload:
-                path = f"evidence/req_{selected_issue.number}/{file_to_upload.name}"
-                repo.create_file(path, f"Audit Evidence: {file_to_upload.name}", file_to_upload.read())
-                selected_issue.create_comment(f"✅ **Evidence Uploaded:** `{file_to_upload.name}`")
-                st.success("File stored in GitHub!")
+            with st.expander(f"{status_color} | #{issue.number}: {issue.title}", expanded=False):
+                st.write(f"**Objective:** {issue.body}")
+                st.caption(f"Created on: {issue.created_at.strftime('%Y-%m-%d')}")
+                st.divider()
+                
+                chat_col, upload_col = st.columns([2, 1])
+                
+                with chat_col:
+                    st.markdown("##### 💬 Conversation history")
+                    
+                    # History
+                    for comment in issue.get_comments():
+                        is_auditor = "parameshwarareddy1" in comment.user.login
+                        with st.chat_message("assistant" if is_auditor else "user"):
+                            st.write(f"**{comment.user.login}:** {comment.body}")
+                    
+                    # New message
+                    msg_key = f"input_{issue.id}"
+                    new_msg = st.text_input("Reply to this request...", key=msg_key)
+                    if st.button("Send Message", key=f"btn_{issue.id}"):
+                        if new_msg:
+                            issue.create_comment(new_msg)
+                            st.rerun()
+
+                with upload_col:
+                    st.markdown("##### 📤 Evidence Upload")
+                    file_key = f"file_{issue.id}"
+                    uploaded_file = st.file_uploader("Drop workpapers here", key=file_key)
+                    
+                    if uploaded_file:
+                        with st.spinner("Uploading..."):
+                            path = f"evidence/req_{issue.number}/{uploaded_file.name}"
+                            repo.create_file(path, f"Upload for #{issue.number}", uploaded_file.read())
+                            issue.create_comment(f"✅ **New Evidence:** `{uploaded_file.name}`")
+                            st.success("Uploaded to GitHub!")
+                            st.rerun()
